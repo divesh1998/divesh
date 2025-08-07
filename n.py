@@ -58,12 +58,31 @@ def detect_price_action(df):
     return patterns
 
 # --- Signal Generator (trend filtered) ---
-def generate_signal(df):
-    df['EMA10'] = df['Close'].ewm(span=10).mean()
-    df['EMA20'] = df['Close'].ewm(span=20).mean()
-    df['Signal'] = 0
-    trend = detect_trend(df)
+def detect_trend_smart(df):
+    # Calculate EMAs
+    ema20 = df['Close'].ewm(span=20).mean()
+    ema50 = df['Close'].ewm(span=50).mean()
+    ema200 = df['Close'].ewm(span=200).mean()
 
+    # Slope of EMA20
+    slope = ema20.iloc[-1] - ema20.iloc[-5]
+    # Total price range
+    range_size = df['High'].max() - df['Low'].min()
+
+    # Latest values
+    latest_ema20 = ema20.iloc[-1]
+    latest_ema50 = ema50.iloc[-1]
+    latest_ema200 = ema200.iloc[-1]
+
+    # Trend Conditions
+    if latest_ema20 > latest_ema50 > latest_ema200 and slope > 0:
+        return "Strong Uptrend"
+    elif latest_ema20 < latest_ema50 < latest_ema200 and slope < 0:
+        return "Strong Downtrend"
+    elif abs(slope) < (0.01 * range_size):
+        return "Sideways"
+    else:
+        return "Unclear Trend"
     if trend == "Uptrend":
         df.loc[df['EMA10'] > df['EMA20'], 'Signal'] = 1
     elif trend == "Downtrend":
@@ -95,20 +114,55 @@ def backtest_accuracy(df):
     return round(len(correct) / len(total) * 100, 2) if len(total) else 0
 
 # --- Elliott Wave Logic ---
-def detect_elliott_wave_breakout(df):
-    if len(df) < 6:
-        return False, ""
-    wave1_start = df['Low'].iloc[-6]
-    wave1_end = df['High'].iloc[-5]
-    wave2 = df['Low'].iloc[-4]
-    current_price = df['Close'].iloc[-1]
-    trend = detect_trend(df)
+def detect_elliott_wave(df):
+    if len(df) < 30:
+        return None
 
-    if trend == "Uptrend" and current_price > wave1_end:
-        return True, "🌀 Elliott Wave 3 Uptrend Breakout Detected!"
-    elif trend == "Downtrend" and current_price < wave2:
-        return True, "🌀 Elliott Wave 3 Downtrend Breakout Detected!"
-    return False, ""
+    waves = {}
+
+    # Wave 1: First swing high from a low
+    low_idx = df['Low'].idxmin()
+    wave1_end_idx = df['High'][low_idx:].idxmax()
+    if wave1_end_idx <= low_idx:
+        return None
+
+    wave1_start_price = df['Low'].loc[low_idx]
+    wave1_end_price = df['High'].loc[wave1_end_idx]
+
+    # Wave 2: Retracement from Wave 1
+    wave2_idx = df['Low'][wave1_end_idx:].idxmin()
+    wave2_price = df['Low'].loc[wave2_idx]
+
+    # Wave 3: Breaks Wave 1 high and goes further
+    wave3_idx = df['High'][wave2_idx:].idxmax()
+    wave3_price = df['High'].loc[wave3_idx]
+
+    # Wave 4: Retracement again
+    wave4_idx = df['Low'][wave3_idx:].idxmin()
+    wave4_price = df['Low'].loc[wave4_idx]
+
+    # Wave 5: Final high
+    wave5_idx = df['High'][wave4_idx:].idxmax()
+    wave5_price = df['High'].loc[wave5_idx]
+
+    waves['Wave 1'] = (low_idx, wave1_end_idx)
+    waves['Wave 2'] = (wave1_end_idx, wave2_idx)
+    waves['Wave 3'] = (wave2_idx, wave3_idx)
+    waves['Wave 4'] = (wave3_idx, wave4_idx)
+    waves['Wave 5'] = (wave4_idx, wave5_idx)
+
+    return waves
+
+# --- Display Elliott Wave Info ---
+def show_elliott_wave(df, waves):
+    if not waves:
+        st.warning("Elliott Wave structure not detected.")
+        return
+
+    st.subheader("🔮 Elliott Wave Structure Detected")
+    for wave, (start_idx, end_idx) in waves.items():
+        st.write(f"{wave}: {df.index.get_loc(start_idx)} to {df.index.get_loc(end_idx)}")
+        st.line_chart(df['Close'].loc[start_idx:end_idx])
 
 # --- Upload chart image ---
 uploaded_image = st.file_uploader("📸 Upload Chart", type=["png", "jpg", "jpeg"])
@@ -172,3 +226,4 @@ for tf_label, tf_code in timeframes.items():
             st.info(f"📌 {p}")
 
     st.line_chart(df[['Close']])
+
